@@ -1,9 +1,3 @@
-// ----------------------------------
-// Submission for BLT Tech Challenge
-// Tahmid Kazi
-// Sunday, Jan 12, 2025
-// ----------------------------------
-
 #include "pico/stdlib.h"
 #include "hardware/timer.h"
 
@@ -12,31 +6,48 @@
 #define LED2_PIN 3
 
 // Global variables
-volatile uint16_t led1_counter = 0;  // Simulated 16-bit counter
+volatile uint16_t led1_counter = 0;  // Counter for LED1 (16-bit simulation)
+volatile uint32_t led2_timer_counter = 0;  // Counter for LED2 timing
 volatile bool led1_state = false;
 volatile bool led2_blinking = false;
-volatile int led2_blink_count = 0;
-volatile absolute_time_t led2_next_blink_time;
+volatile uint8_t led2_blink_count = 0;
 
-// Callback function for LED1 (simulated 16-bit timer at 65,000)
-bool led1_callback(struct repeating_timer *t) {
-    led1_counter += 650;  // Increment by 650 µs per tick (faster increments)
+// Callback function for a shared 16-bit timer
+bool led_timer_callback(struct repeating_timer *t) {
+    // Increment counters
+    led1_counter += 650;        // Increment by 650 µs per tick
+    led2_timer_counter += 650;  // Increment for LED2
 
-    if (led1_counter >= 65000) { // Check for 65,000 threshold
-        led1_counter = 0;       // Reset counter to simulate wraparound
+    // Handle LED1 toggle (65,000 µs or 65 ms threshold)
+    if (led1_counter >= 65000) { // 65 ms elapsed
+        led1_counter = 0;       // Reset counter
         led1_state = !led1_state; // Toggle LED1 state
-        gpio_put(LED1_PIN, led1_state); // Set LED1 GPIO
+        gpio_put(LED1_PIN, led1_state); // Update LED1 GPIO
     }
-    return true; // Repeat the timer
-}
 
-// Callback function for LED2 (3-second timer)
-bool led2_callback(struct repeating_timer *t) {
-    // Start blinking LED2
-    led2_blinking = true;
-    led2_blink_count = 0;
-    led2_next_blink_time = make_timeout_time_ms(0); // Start immediately
-    return true;                                    // Repeat the timer
+    // Handle LED2 blinking logic
+    if (led2_blinking) {
+        if (led2_timer_counter >= 200000) { // 200 ms interval for blinking
+            led2_timer_counter = 0;  // Reset timer counter
+            if (led2_blink_count < 10) { // Blink 5 ON/OFF cycles (10 toggles)
+                gpio_put(LED2_PIN, led2_blink_count % 2); // Toggle LED2
+                led2_blink_count++;
+            } else {
+                // Stop blinking after 5 ON/OFF cycles
+                led2_blinking = false;
+                gpio_put(LED2_PIN, 0); // Ensure LED2 is OFF
+            }
+        }
+    } else {
+        // Start blinking LED2 every 3 seconds
+        if (led2_timer_counter >= 3000000) { // 3,000,000 µs or 3 seconds elapsed
+            led2_timer_counter = 0;  // Reset counter
+            led2_blinking = true;    // Start blinking
+            led2_blink_count = 0;    // Reset blink count
+        }
+    }
+
+    return true; // Repeat the timer
 }
 
 int main() {
@@ -52,31 +63,14 @@ int main() {
     gpio_set_dir(LED2_PIN, GPIO_OUT);
     gpio_put(LED2_PIN, 0); // Ensure LED2 starts OFF
 
-    // Create timers for the LEDs
-    struct repeating_timer led1_timer;
-    struct repeating_timer led2_timer;
+    // Create a single repeating timer for both LEDs
+    struct repeating_timer led_timer;
 
-    // Add a repeating timer for LED1 (650 µs increments)
-    add_repeating_timer_us(650, led1_callback, NULL, &led1_timer);
-
-    // Add a repeating timer for LED2 (3,000,000 µs or 3 seconds)
-    add_repeating_timer_us(3000000, led2_callback, NULL, &led2_timer);
+    // Add a repeating timer with 650 µs increments
+    add_repeating_timer_us(650, led_timer_callback, NULL, &led_timer);
 
     // Main loop
     while (true) {
-        // Handle LED2 blinking (non-blocking)
-        if (led2_blinking && absolute_time_diff_us(get_absolute_time(), led2_next_blink_time) <= 0) {
-            if (led2_blink_count < 10) { // Blink 5 ON/OFF cycles
-                gpio_put(LED2_PIN, led2_blink_count % 2); // Toggle LED2
-                led2_blink_count++;
-                led2_next_blink_time = make_timeout_time_ms(200); // Set next toggle time
-            } else {
-                // Stop blinking after 5 blinks and turn LED2 OFF
-                gpio_put(LED2_PIN, 0); // Ensure LED2 is OFF
-                led2_blinking = false; // Disable further blinking until the next 3-second cycle
-            }
-        }
-
         // Prevent CPU idle
         tight_loop_contents();
     }
